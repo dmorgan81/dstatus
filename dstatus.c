@@ -18,9 +18,13 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 
 #include <alsa/asoundlib.h>
 #include <X11/Xlib.h>
+#include <linux/wireless.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 
 #include "config.h"
 
@@ -60,6 +64,8 @@ static VolInfo volinfo;
 static float backlight;
 #endif
 
+#ifdef WITH_WIFI
+static char *wifi;
 #endif
 
 static int acpid_socket;
@@ -203,6 +209,74 @@ bklt_error:
 }
 #endif
 
+#ifdef WITH_WIFI
+static void read_wifi(void) {
+    char buffer[IW_ESSID_MAX_SIZE + 1];
+    int fd;
+    struct iwreq req;
+
+    free(wifi);
+    wifi = NULL;
+
+    strncpy(req.ifr_name, WIFI_IFACE, IFNAMSIZ);
+    req.u.essid.pointer = &buffer;
+    req.u.essid.length = sizeof(buffer);
+    req.u.essid.flags = 0;
+
+    if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) == -1)
+        die("dstatus: cannot connect to essid socket");
+    if (ioctl(fd, SIOCGIWESSID, &req) == -1) {
+        close(fd);
+        die("dstatus: cannot query for essid");
+    }
+
+    close(fd);
+
+    if (strlen(buffer) == 0) {
+        if (asprintf(&wifi, "%s", WIFI_NO_CONNECT) == -1)
+            die("dstatus: cannot set essid");
+    } else {
+        if (asprintf(&wifi, "%s", buffer) == -1)
+            die("dstatus: cannot set essid");
+    }
+}
+
+static void *wifi_thread(void *arg) {
+    struct sockaddr_nl addr;
+    int sock, len;
+    char buffer[4096];
+    struct nlmsghdr *nlh;
+
+    if (pthread_detach(pthread_self()) != 0)
+        die("dstatus: cannot detach wifi thread");
+
+    if ((sock = socket(PF_NETLINK, SOCK_RAW, NETLINK_ROUTE)) == -1)
+        die("dstatus: cannot open NETLINK_ROUTE socket");
+
+    memset(&addr, 0, sizeof(addr));
+    addr.nl_family = AF_NETLINK;
+    addr.nl_groups = RTMGRP_IPV4_IFADDR;
+
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) == -1)
+        die("dstatus: cannot bind to NETLINK_ROUTE socket");
+
+    nlh = (struct nlmsghdr *) buffer;
+    while ((len = recv(sock, nlh, sizeof(buffer), 0)) > 0) {
+        while ((NLMSG_OK(nlh, len)) && (nlh->nlmsg_type != NLMSG_DONE)) {
+            if (nlh->nlmsg_type == RTM_NEWADDR || nlh->nlmsg_type == RTM_DELADDR) {
+                read_wifi();
+                update_status();
+            }
+            nlh = NLMSG_NEXT(nlh, len);
+        }
+    }
+
+    die("dstatus: end of wifi thread");
+
+    return NULL;
+}
+#endif
+
 static char *draw_bar(const float f) {
     char *s;
 
@@ -222,6 +296,19 @@ static char *draw_percent(const float f) {
         die("dstatus: cannot format percentage");
     return s;
 }
+
+static char *get_wifi(void) {
+#ifndef WITH_WIFI
+    return EMPTY_STRING;
+#else
+    char *s;
+
+    if (asprintf(&s, WIFI_FMT, wifi) == -1)
+        die("dstatus: cannot format wifi");
+    return s;
+#endif // WITH_WIFI
+}
+
 
 static char *get_backlight(void) {
 #ifndef WITH_BKLT
@@ -405,6 +492,7 @@ static void update_status(void) {
     char *batt = get_batt();
     char *vol = get_vol();
     char *backlight = get_backlight();
+    char *wifi = get_wifi();
 
     set_status(STATUS_FMT, MODULES);
 
@@ -413,6 +501,7 @@ static void update_status(void) {
     free(batt);
     free(vol);
     free(backlight);
+    free(wifi);
 }
 
 static char *read_acpid_socket(void) {
@@ -497,13 +586,17 @@ static void trap(const int signo) {
     vol_close();
 #endif
 
+#ifdef WITH_WIFI
+    free(wifi);
+#endif
+
     close(acpid_socket);
 
     exit(EXIT_SUCCESS);
 }
 
 int main(void) {
-    pthread_t thrd_acpid, thrd_vol;
+    pthread_t thrd_acpid, thrd_vol, thrd_wifi;
 
 #ifdef WITH_X
     if (!(dpy = XOpenDisplay(NULL)))
@@ -520,6 +613,12 @@ int main(void) {
 
 #ifdef WITH_BKLT
     read_backlight();
+#endif
+
+#ifdef WITH_WIFI
+    read_wifi();
+    if (pthread_create(&thrd_wifi, NULL, wifi_thread, NULL) != 0)
+        die("dstatus: cannot create wifi thread");
 #endif
 
 #ifdef WITH_VOL

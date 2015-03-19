@@ -4,12 +4,12 @@
  * The order here determines the order they are displayed. If you change
  * anything here you'll probably want to change STATUS_FMT below.
  */
-#define MODULES cpu, batt, backlight, vol, time
+#define MODULES wifi, cpu, batt, backlight, vol, time
 
 /**
  * Format string for the status bar. man printf(3) for formats.
  */
-#define STATUS_FMT "%s | %s | %s | %s | %s"
+#define STATUS_FMT "%s | %s | %s | %s | %s | %s"
 
 /**
  * Bar settings
@@ -70,6 +70,13 @@
 #define BKLT_PATH "/sys/class/backlight/radeon_bl0"
 #define BKLT_MAX BKLT_PATH "/max_brightness"
 #define BKLT_CURRENT BKLT_PATH "/actual_brightness"
+
+/**
+ * Wifi settings
+ */
+#define WIFI_FMT "W:%s"
+#define WIFI_IFACE "wlan0"
+#define WIFI_NO_CONNECT "------"
 
 /**
  * ACPID socket location
