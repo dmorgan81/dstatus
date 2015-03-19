@@ -10,9 +10,11 @@
 #include <string.h>
 #include <signal.h>
 #include <alloca.h>
+#include <pthread.h>
 
 #include <errno.h>
 
+#include <alsa/asoundlib.h>
 #include <X11/Xlib.h>
 
 #include "config.h"
@@ -34,6 +36,23 @@ typedef struct {
 CpuStat lstat;
 #endif
 
+#ifdef WITH_VOL
+typedef struct {
+    snd_mixer_t *card;
+    snd_mixer_elem_t *mixer;
+} VolDev;
+VolDev voldev;
+
+typedef struct {
+    int level;
+    bool muted;
+    pthread_mutex_t mutex;
+} VolInfo;
+VolInfo volinfo;
+#endif
+
+static void update_status(void);
+
 static void die(const char *fmt, ...) {
     va_list ap;
     char *s;
@@ -44,17 +63,6 @@ static void die(const char *fmt, ...) {
     free(s);
     va_end(ap);
     exit(EXIT_FAILURE);
-}
-
-static void trap(const int signo) {
-    if (signo != SIGINT)
-        return;
-
-#ifdef WITH_X
-    XCloseDisplay(dpy);
-#endif
-
-    exit(EXIT_SUCCESS);
 }
 
 #ifdef WITH_CPU
@@ -76,6 +84,85 @@ static void read_stat(CpuStat *stat) {
 }
 #endif
 
+#ifdef WITH_VOL
+static void vol_open(void) {
+    snd_mixer_t *card;
+    snd_mixer_elem_t *mixer;
+    snd_mixer_selem_id_t *sid;
+
+    if (snd_mixer_open(&card, 0) < 0)
+        die("dstatus: cannot init ALSA");
+    if (snd_mixer_attach(card, "default") < 0)
+        die("dstatus: cannot init ALSA");
+    if (snd_mixer_selem_register(card, NULL, NULL) < 0)
+        die("dstatus: cannot init ALSA");
+    if (snd_mixer_load(card) < 0)
+        die("dstatus: cannot init ALSA");
+    voldev.card = card;
+
+    snd_mixer_selem_id_alloca(&sid);
+    snd_mixer_selem_id_set_index(sid, 0);
+    snd_mixer_selem_id_set_name(sid, VOL_MIXER);
+    if (!(mixer = snd_mixer_find_selem(card, sid)))
+        die("dstatus: cannot init ALSA");
+    voldev.mixer = mixer;
+
+    if (pthread_mutex_init(&(volinfo.mutex), NULL) != 0)
+        die("dstatus: cannot init volinfo.mutex");
+}
+
+static void vol_close(void) {
+    snd_mixer_close(voldev.card);
+    snd_config_update_free_global();
+
+    pthread_mutex_destroy(&(volinfo.mutex));
+}
+
+static void vol_lock(void) {
+    if (pthread_mutex_lock(&(volinfo.mutex)) != 0)
+        die("dstatus: cannot lock volinfo.mutex");
+}
+
+static void vol_unlock(void) {
+    if (pthread_mutex_unlock(&(volinfo.mutex)) != 0)
+        die("dstatus: cannot unlock volinfo.mutex");
+}
+
+static void read_vol(void) {
+    int muted;
+    long vol, min, max;
+    snd_mixer_elem_t *mixer = voldev.mixer;
+
+    vol_lock();
+
+    if (snd_mixer_selem_get_playback_switch(mixer, SND_MIXER_SCHN_MONO, &muted) < 0)
+        die("dstatus: cannot set vol.muted");
+    volinfo.muted = !muted;
+
+    snd_mixer_selem_get_playback_volume_range(mixer, &min, &max);
+    if (snd_mixer_selem_get_playback_volume(mixer, SND_MIXER_SCHN_MONO, &vol) < 0)
+        die("dstatus: cannot set vol.level");
+    vol = vol < max ? (vol > min ? vol : min) : max;
+    volinfo.level = (int) round((vol * 100.0f) / max);
+
+    vol_unlock();
+}
+
+static void *vol_thread(void *arg) {
+    if (pthread_detach(pthread_self()) != 0)
+        die("dstatus: cannot detach vol thread");
+
+    while (true) {
+        snd_mixer_wait(voldev.card, -1);
+        snd_mixer_handle_events(voldev.card);
+        read_vol();
+        update_status();
+    }
+
+    return NULL;
+}
+#endif
+
 static char *draw_bar(const float f) {
     char *s;
 
@@ -91,14 +178,41 @@ static char *draw_bar(const float f) {
 static char *draw_percent(const float f) {
     char *s;
 
-
-    if (asprintf(&s, "%0.2f", CONSTRAIN(f)) == -1)
+    if (asprintf(&s, "%0.0f", CONSTRAIN(f)) == -1)
         die("dstatus: cannot format percentage");
     return s;
 }
 
+static char *get_vol(void) {
+#ifndef WITH_VOL
+    return EMPTY_STRING;
+#else
+    char *s, *bar;
 
-static char *get_batt() {
+    vol_lock();
+
+    if (volinfo.muted) {
+        if (asprintf(&bar, "%s", VOL_MUTED) == -1)
+            die("dstatus: cannot format vol muted");
+    } else {
+#ifdef VOL_USE_BAR
+        bar = draw_bar((float) volinfo.level);
+#else
+        bar = draw_percent((float) volinfo.level);
+#endif // WOL_USE_BAR
+    }
+
+    vol_unlock();
+
+    if (asprintf(&s, VOL_FMT, bar) == -1)
+        die("dstatus: cannot format vol");
+    free(bar);
+
+    return s;
+#endif // WITH_VOL
+}
+
+static char *get_batt(void) {
 #ifndef WITH_BATT
     return EMPTY_STRING;
 #else
@@ -147,7 +261,7 @@ batt_err:
 #endif // WITH_BATT
 }
 
-static char *get_cpu() {
+static char *get_cpu(void) {
 #ifndef WITH_CPU
     return EMPTY_STRING;
 #else
@@ -176,7 +290,7 @@ static char *get_cpu() {
 #endif // WITH_CPU
 }
 
-static char *get_time() {
+static char *get_time(void) {
 #ifndef WITH_TIME
     return EMPTY_STRING;
 #else
@@ -225,19 +339,38 @@ static void set_status(const char *fmt, ...) {
     free(status);
 }
 
-static void update_status() {
+static void update_status(void) {
     char *time = get_time();
     char *cpu = get_cpu();
     char *batt = get_batt();
+    char *vol = get_vol();
 
     set_status(STATUS_FMT, MODULES);
 
     free(time);
     free(cpu);
     free(batt);
+    free(vol);
+}
+
+static void trap(const int signo) {
+    if (signo != SIGINT)
+        return;
+
+#ifdef WITH_X
+    XCloseDisplay(dpy);
+#endif
+
+#ifdef WITH_VOL
+    vol_close();
+#endif
+
+    exit(EXIT_SUCCESS);
 }
 
 int main(void) {
+    pthread_t thrd_vol;
+
 #ifdef WITH_X
     if (!(dpy = XOpenDisplay(NULL)))
         die("dstatus: cannot open display");
@@ -249,6 +382,13 @@ int main(void) {
 
 #ifdef WITH_CPU
     read_stat(&lstat);
+#endif
+
+#ifdef WITH_VOL
+    vol_open();
+    read_vol();
+    if (pthread_create(&thrd_vol, NULL, vol_thread, NULL) != 0)
+        die("dstatus: cannot create vol thread");
 #endif
 
     for (;;sleep(1))

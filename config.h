@@ -4,12 +4,12 @@
  * The order here determines the order they are displayed. If you change
  * anything here you'll probably want to change STATUS_FMT below.
  */
-#define MODULES cpu, batt, time
+#define MODULES cpu, batt, vol, time
 
 /**
  * Format string for the status bar. man printf(3) for formats.
  */
-#define STATUS_FMT "%s | %s | %s"
+#define STATUS_FMT "%s | %s | %s | %s"
 
 /**
  * Bar settings
@@ -49,3 +49,13 @@
 #define BATT_CHARGE_NOW BATT_PATH "/charge_now"
 #define BATT_CHARGE_FULL BATT_PATH "/charge_full"
 #define BATT_STATUS BATT_PATH "/status"
+
+/**
+ * Volume settings
+ *
+ * Remove VOL_USE_BAR to display percentage instead of bar.
+ */
+#define VOL_FMT "V:%s"
+#define VOL_USE_BAR
+#define VOL_MIXER "Master"
+#define VOL_MUTED "[off]"
