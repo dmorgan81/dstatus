@@ -1,14 +1,15 @@
 /**
  * Which modules to include in the status bar.
  *
- * The order here determines the order they are displayed.
+ * The order here determines the order they are displayed. If you change
+ * anything here you'll probably want to change STATUS_FMT below.
  */
 #define MODULES time
 
 /**
- * Separate modules by this string
+ * Format string for the status bar. man printf(3) for formats.
  */
-#define SEPARATOR " | "
+#define STATUS_FMT "%s"
 
 /**
  * Bar settings

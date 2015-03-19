@@ -6,7 +6,7 @@
 #include <unistd.h>
 
 #include <time.h>
-#include <strings.h>
+#include <string.h>
 #include <signal.h>
 #include <alloca.h>
 
@@ -51,26 +51,38 @@ static char *get_time() {
 #ifndef WITH_TIME
     return EMPTY_STRING;
 #else
+    static char *cache;
     char *s;
     time_t t;
-
-    if (!(s = calloc(DATE_TIME_MAX_LEN + 1, sizeof(char))))
-        die("dstatus: cannot allocate memory for time");
+    size_t len;
 
     t = time(NULL);
-    if (strftime(s, DATE_TIME_MAX_LEN, DATE_TIME_FMT, localtime(&t)) == -1)
-        die("dstatus: cannot format time");
+
+    if (!cache || t % 60 == 0) {
+        /* Note that if you want to display seconds, this cache won't work. */
+        free(cache);
+
+        if (!(cache = calloc(DATE_TIME_MAX_LEN + 1, sizeof(char))))
+            die("dstatus: cannot allocate memory for time");
+        if (strftime(cache, DATE_TIME_MAX_LEN, DATE_TIME_FMT, localtime(&t)) == -1)
+            die("dstatus: cannot format time");
+    }
+
+    len = strlen(cache) + 1;
+    if (!(s = calloc(len, sizeof(char))))
+        die("dstatus: cannot allocate memory for time");
+    strncpy(s, cache, len);
 
     return s;
 #endif
 }
 
-static void set_status(const char *sep, ...) {
+static void set_status(const char *fmt, ...) {
     va_list ap;
     char *status;
 
-    va_start(ap, sep);
-    if (vasprintf(&status, "%s", ap) == -1)
+    va_start(ap, fmt);
+    if (vasprintf(&status, fmt, ap) == -1)
         die("dstatus: cannot set status");
     va_end(ap);
 
@@ -87,7 +99,7 @@ static void set_status(const char *sep, ...) {
 static void update_status() {
     char * time = get_time();
 
-    set_status(SEPARATOR, MODULES);
+    set_status(STATUS_FMT, MODULES);
 
     free(time);
 }
