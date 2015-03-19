@@ -18,6 +18,7 @@
 #include "config.h"
 
 #define EMPTY_STRING calloc(1, sizeof(char))
+#define CONSTRAIN(A) (fmaxf(0.0, fminf(100.0, (A))))
 
 extern int errno;
 
@@ -81,10 +82,69 @@ static char *draw_bar(const float f) {
     if (!(s = calloc(BAR_LEN+1, sizeof(char))))
         die("dstatus: cannot allocate memory for bar");
 
-    for (int i = 0, b = (int) round(f / BAR_LEN); i < BAR_LEN; i++)
+    for (int i = 0, b = (int) round(CONSTRAIN(f) / BAR_LEN); i < BAR_LEN; i++)
         s[i] = i < b ? BAR_CHAR_ON : BAR_CHAR_OFF;
 
     return s;
+}
+
+static char *draw_percent(const float f) {
+    char *s;
+
+
+    if (asprintf(&s, "%0.2f", CONSTRAIN(f)) == -1)
+        die("dstatus: cannot format percentage");
+    return s;
+}
+
+
+static char *get_batt() {
+#ifndef WITH_BATT
+    return EMPTY_STRING;
+#else
+    FILE *fh;
+    char *s, *bar;
+    unsigned long now, full;
+    float batt;
+    char status;
+
+    if (!(fh = fopen(BATT_CHARGE_NOW, "r")))
+        goto batt_err;
+    if (fscanf(fh, "%lu", &now) != 1)
+        goto batt_err;
+    fclose(fh);
+
+    if (!(fh = fopen(BATT_CHARGE_FULL, "r")))
+        goto batt_err;
+    if (fscanf(fh, "%lu", &full) != 1)
+        goto batt_err;
+    fclose(fh);
+
+    if (full <= 0)
+        goto batt_err;
+
+    batt = 100.0 * ((float) now / full);
+
+    if (!(fh = fopen(BATT_STATUS, "r")) || ((status = fgetc(fh)) == EOF))
+        status = 'U';
+    fclose(fh);
+
+#ifdef BATT_USE_BAR
+    bar = draw_bar(batt);
+#else
+    bar = draw_percent(batt);
+#endif // BATT_USE_BAR
+    if (asprintf(&s, BATT_FMT, status, bar) == -1)
+        die("dstatus: cannot format batt");
+    free(bar);
+
+    return s;
+batt_err:
+    fclose(fh);
+    if (asprintf(&s, BATT_FMT, 'U', "<error>") == -1)
+        die("dstatus: cannot format batt error");
+    return s;
+#endif // WITH_BATT
 }
 
 static char *get_cpu() {
@@ -106,8 +166,7 @@ static char *get_cpu() {
 #ifdef CPU_USE_BAR
     bar = draw_bar(cpu);
 #else
-    if (asprintf(&bar, "%0.2f%%", cpu) == -1)
-        die("dstatus: cannot format cpu percentage");
+    bar = draw_percent(cpu);
 #endif // CPU_USE_BAR
     if (asprintf(&s, CPU_FMT, bar) == -1)
         die("dstatus: cannot format cpu");
@@ -167,13 +226,15 @@ static void set_status(const char *fmt, ...) {
 }
 
 static void update_status() {
-    char * time = get_time();
-    char * cpu = get_cpu();
+    char *time = get_time();
+    char *cpu = get_cpu();
+    char *batt = get_batt();
 
     set_status(STATUS_FMT, MODULES);
 
     free(time);
     free(cpu);
+    free(batt);
 }
 
 int main(void) {
