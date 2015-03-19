@@ -58,4 +58,12 @@
 #define VOL_FMT "V:%s"
 #define VOL_USE_BAR
 #define VOL_MIXER "Master"
-#define VOL_MUTED "[off]"
+#define VOL_MUTED "[off]     "
+
+/**
+ * ACPID socket location
+ *
+ * Unlikely that you'll have to change these.
+ */
+#define ACPID_SOCKET "/var/run/acpid.socket"
+#define ACPID_EVENTS { "LID", "BRTUP", "BRTDN" }

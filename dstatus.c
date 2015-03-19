@@ -14,6 +14,11 @@
 
 #include <errno.h>
 
+#include <sys/select.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <sys/socket.h>
+
 #include <alsa/asoundlib.h>
 #include <X11/Xlib.h>
 
@@ -50,6 +55,9 @@ typedef struct {
 } VolInfo;
 VolInfo volinfo;
 #endif
+
+static int acpid_socket;
+static char *acpid_events[] = ACPID_EVENTS;
 
 static void update_status(void);
 
@@ -353,6 +361,73 @@ static void update_status(void) {
     free(vol);
 }
 
+static char *read_acpid_socket(void) {
+    char *s = NULL, *rs;
+    char buffer[4096];
+    fd_set rfds;
+    ssize_t n;
+    size_t size = 0;
+
+    FD_ZERO(&rfds);
+    FD_SET(acpid_socket, &rfds);
+
+    if (select(acpid_socket+1, &rfds, NULL, NULL, NULL) == -1)
+        die("dstatus: cannot read from acpid socket");
+
+    if ((n = read(acpid_socket, buffer, sizeof(buffer))) == -1)
+        die("dstatus: cannot read from acpid socket");
+
+    if (!(rs = realloc(s, size + n + 1)))
+        die("dstatus: cannot read from acpid socket");
+    s = rs;
+
+    memcpy(s + size, buffer, n);
+    size += n;
+    *(s+size) = 0;
+
+    return s;
+}
+
+static void process_acpid_event(char *event) {
+    char *s;
+    int len = sizeof(acpid_events) / sizeof(acpid_events[0]);
+
+    for (int i = 0; i < len; i++) {
+        s = acpid_events[i];
+        if (strstr(event, s)) {
+            update_status();
+            break;
+        }
+    }
+}
+
+static void *acpid_thread(void *arg) {
+    char *s;
+    struct sockaddr_un remote;
+
+    if (pthread_detach(pthread_self()) != 0)
+        die("dstatus: cannot detach acpid thread");
+
+    if ((acpid_socket = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
+        die("dstatus: cannot connect to acpid socket");
+
+    remote.sun_family = AF_UNIX;
+    strcpy(remote.sun_path, ACPID_SOCKET);
+    if (connect(acpid_socket, (struct sockaddr *)&remote, sizeof(remote)) == -1)
+        die("dstatus: cannot connect to acpid socket");
+
+    if (fcntl(acpid_socket, F_SETFD, FD_CLOEXEC) == -1)
+        die("dstatus: cannot connect to acpid socket");
+
+    while (true) {
+        s = read_acpid_socket();
+        process_acpid_event(s);
+        free(s);
+    }
+
+    return NULL;
+}
+
 static void trap(const int signo) {
     if (signo != SIGINT)
         return;
@@ -365,11 +440,13 @@ static void trap(const int signo) {
     vol_close();
 #endif
 
+    close(acpid_socket);
+
     exit(EXIT_SUCCESS);
 }
 
 int main(void) {
-    pthread_t thrd_vol;
+    pthread_t thrd_acpid, thrd_vol;
 
 #ifdef WITH_X
     if (!(dpy = XOpenDisplay(NULL)))
@@ -390,6 +467,9 @@ int main(void) {
     if (pthread_create(&thrd_vol, NULL, vol_thread, NULL) != 0)
         die("dstatus: cannot create vol thread");
 #endif
+
+    if (pthread_create(&thrd_acpid, NULL, acpid_thread, NULL) != 0)
+        die("dstatus: cannot create acpid thread");
 
     for (;;sleep(1))
         update_status();
