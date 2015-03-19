@@ -2,9 +2,10 @@
 
 _pkgname=dstatus
 pkgname=$_pkgname-git
-pkgver=1f9647d
+pkgver=6b0d1e2
 pkgrel=1
 pkgdesc="A simple status bar. GIT version"
+url="https://github.com/Spitemare/dstatus"
 arch=('i686' 'x86_64')
 license=('custom:UNLICENSE')
 depends=('libx11' 'alsa-lib' 'acpid')
