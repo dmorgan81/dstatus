@@ -4,12 +4,12 @@
  * The order here determines the order they are displayed. If you change
  * anything here you'll probably want to change STATUS_FMT below.
  */
-#define MODULES time
+#define MODULES cpu, time
 
 /**
  * Format string for the status bar. man printf(3) for formats.
  */
-#define STATUS_FMT "%s"
+#define STATUS_FMT "%s | %s"
 
 /**
  * Bar settings
@@ -18,8 +18,8 @@
  * C:=====-----
  */
 #define BAR_LEN 10
-#define BAR_CHAR_ON =
-#define BAR_CHAR_OFF -
+#define BAR_CHAR_ON '='
+#define BAR_CHAR_OFF '-'
 
 /**
  * Date/time settings
@@ -29,3 +29,11 @@
  * */
 #define DATE_TIME_FMT "%F %I:%M %p"
 #define DATE_TIME_MAX_LEN 64
+
+/**
+ * CPU settings
+ *
+ * Remove CPU_USE_BAR to display percentage instead of bar.
+ */
+#define CPU_FMT "C:%s"
+#define CPU_USE_BAR

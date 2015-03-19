@@ -12,7 +12,7 @@ X11LIB = /usr/X11R6/lib
 
 # includes and libs
 INCS = -I. -I/usr/include -I${X11INC}
-LIBS = -L/usr/lib -lc -lasound -lpthread -L${X11LIB} -lX11
+LIBS = -L/usr/lib -lc -lm -lasound -lpthread -L${X11LIB} -lX11
 
 # flags
 CPPFLAGS = -DVERSION=\"${VERSION}\"
@@ -26,7 +26,7 @@ CC = cc
 
 # Module configuration
 # Comment out the relavent line to disable that module
-#CPPFLAGS += -DWITH_X # If disabled print to STDOUT
+CPPFLAGS += -DWITH_X # If disabled print to STDOUT
 CPPFLAGS += -DWITH_TIME
 CPPFLAGS += -DWITH_CPU
 CPPFLAGS += -DWITH_MEM
