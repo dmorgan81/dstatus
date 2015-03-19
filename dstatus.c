@@ -38,7 +38,7 @@ typedef struct {
     unsigned long long idle;
     unsigned long long total;
 } CpuStat;
-CpuStat lstat;
+static CpuStat lstat;
 #endif
 
 #ifdef WITH_VOL
@@ -46,14 +46,20 @@ typedef struct {
     snd_mixer_t *card;
     snd_mixer_elem_t *mixer;
 } VolDev;
-VolDev voldev;
+static VolDev voldev;
 
 typedef struct {
     int level;
     bool muted;
     pthread_mutex_t mutex;
 } VolInfo;
-VolInfo volinfo;
+static VolInfo volinfo;
+#endif
+
+#ifdef WITH_BKLT
+static float backlight;
+#endif
+
 #endif
 
 static int acpid_socket;
@@ -171,6 +177,32 @@ static void *vol_thread(void *arg) {
 }
 #endif
 
+#ifdef WITH_BKLT
+static void read_backlight(void) {
+    FILE *fh;
+    unsigned int max, current;
+
+    if (!(fh = fopen(BKLT_MAX, "r")))
+        goto bklt_error;
+    if (fscanf(fh, "%ud", &max) != 1)
+        goto bklt_error;
+    fclose(fh);
+
+    if (!(fh = fopen(BKLT_CURRENT, "r")))
+        goto bklt_error;
+    if (fscanf(fh, "%ud", &current) != 1)
+        goto bklt_error;
+    fclose(fh);
+
+    backlight = 100.0 * ((double) current / max);
+    return;
+
+bklt_error:
+    fclose(fh);
+    die("dstatus: cannot read backlight");
+}
+#endif
+
 static char *draw_bar(const float f) {
     char *s;
 
@@ -186,9 +218,29 @@ static char *draw_bar(const float f) {
 static char *draw_percent(const float f) {
     char *s;
 
-    if (asprintf(&s, "%0.0f", CONSTRAIN(f)) == -1)
+    if (asprintf(&s, "%0.0f%%", CONSTRAIN(f)) == -1)
         die("dstatus: cannot format percentage");
     return s;
+}
+
+static char *get_backlight(void) {
+#ifndef WITH_BKLT
+    return EMPTY_STRING;
+#else
+    char *s, *bar;
+
+#ifdef BKLT_USE_BAR
+    bar = draw_bar(backlight);
+#else
+    bar = draw_percent(backlight);
+#endif // BKLT_USE_VAR
+
+    if (asprintf(&s, BKLT_FMT, bar) == -1)
+        die("dstatus: cannot format backlight");
+    free(bar);
+
+    return s;
+#endif // WITH_BKLT
 }
 
 static char *get_vol(void) {
@@ -207,7 +259,7 @@ static char *get_vol(void) {
         bar = draw_bar((float) volinfo.level);
 #else
         bar = draw_percent((float) volinfo.level);
-#endif // WOL_USE_BAR
+#endif // VOL_USE_BAR
     }
 
     vol_unlock();
@@ -352,6 +404,7 @@ static void update_status(void) {
     char *cpu = get_cpu();
     char *batt = get_batt();
     char *vol = get_vol();
+    char *backlight = get_backlight();
 
     set_status(STATUS_FMT, MODULES);
 
@@ -359,6 +412,7 @@ static void update_status(void) {
     free(cpu);
     free(batt);
     free(vol);
+    free(backlight);
 }
 
 static char *read_acpid_socket(void) {
@@ -389,12 +443,15 @@ static char *read_acpid_socket(void) {
 }
 
 static void process_acpid_event(char *event) {
-    char *s;
+    char *s, *found;
     int len = sizeof(acpid_events) / sizeof(acpid_events[0]);
 
     for (int i = 0; i < len; i++) {
         s = acpid_events[i];
-        if (strstr(event, s)) {
+        if ((found = strstr(event, s))) {
+#ifdef WITH_BKLT
+            read_backlight();
+#endif
             update_status();
             break;
         }
@@ -459,6 +516,10 @@ int main(void) {
 
 #ifdef WITH_CPU
     read_stat(&lstat);
+#endif
+
+#ifdef WITH_BKLT
+    read_backlight();
 #endif
 
 #ifdef WITH_VOL

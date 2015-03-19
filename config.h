@@ -4,12 +4,12 @@
  * The order here determines the order they are displayed. If you change
  * anything here you'll probably want to change STATUS_FMT below.
  */
-#define MODULES cpu, batt, vol, time
+#define MODULES cpu, batt, backlight, vol, time
 
 /**
  * Format string for the status bar. man printf(3) for formats.
  */
-#define STATUS_FMT "%s | %s | %s | %s"
+#define STATUS_FMT "%s | %s | %s | %s | %s"
 
 /**
  * Bar settings
@@ -59,6 +59,17 @@
 #define VOL_USE_BAR
 #define VOL_MIXER "Master"
 #define VOL_MUTED "[off]     "
+
+/**
+ * Backlight settings
+ *
+ * Remove BKLT_USE_BAR to display percentage instead of bar.
+ */
+#define BKLT_FMT "L:%s"
+#define BKLT_USE_BAR
+#define BKLT_PATH "/sys/class/backlight/radeon_bl0"
+#define BKLT_MAX BKLT_PATH "/max_brightness"
+#define BKLT_CURRENT BKLT_PATH "/actual_brightness"
 
 /**
  * ACPID socket location
