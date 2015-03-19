@@ -1,28 +1,25 @@
 # Maintainer: David Morgan <dmorgan81@gmail.com>
 
-pkgname=dstatus
-pkgver=1
+_pkgname=dstatus
+pkgname=$_pkgname-git
+pkgver=1f9647d
 pkgrel=1
-pkgdesc="A simple status bar"
+pkgdesc="A simple status bar. GIT version"
 arch=('i686' 'x86_64')
-license=('MIT')
-depends=('libx11' 'alsa-lib', 'acpid')
-source=(
-    dstatus.c
-    dstatus.h
-    config.h
-    config.mk
-    Makefile
-)
-md5sums=(
-    'SKIP'
-    'SKIP'
-    'SKIP'
-    'SKIP'
-    'SKIP'
-)
+license=('custom:UNLICENSE')
+depends=('libx11' 'alsa-lib' 'acpid')
+source=("git+https://github.com/Spitemare/dstatus.git")
+md5sums=('SKIP')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+
+pkgver() {
+    cd "$srcdir/$_pkgname"
+    echo $(git describe --always | sed "s/-/./g")
+}
+
 build() {
-    cd $srcdir
+    cd "$srcdir/$_pkgname"
     sed -i 's/CPPFLAGS =/CPPFLAGS +=/g' config.mk
     sed -i 's/^CFLAGS = -g/#CFLAGS += -g/g' config.mk
     sed -i 's/^#CFLAGS = -std/CFLAGS += -std/g' config.mk
@@ -33,6 +30,6 @@ build() {
 }
 
 package() {
-    cd $srcdir
+    cd "$srcdir/$_pkgname"
     make PREFIX=/usr DESTDIR=$pkgdir install
 }

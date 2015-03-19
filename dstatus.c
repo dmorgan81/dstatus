@@ -78,9 +78,10 @@ static void die(const char *fmt, ...) {
     char *s;
 
     va_start(ap, fmt);
-    vasprintf(&s, fmt, ap);
-    perror(s);
-    free(s);
+    if (vasprintf(&s, fmt, ap) != -1) {
+        perror(s);
+        free(s);
+    }
     va_end(ap);
     exit(EXIT_FAILURE);
 }
