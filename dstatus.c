@@ -278,23 +278,26 @@ static void *wifi_thread(void *arg) {
 }
 #endif
 
-static char *draw_bar(const float f) {
-    char *s;
-
-    if (!(s = calloc(BAR_LEN+1, sizeof(char))))
-        die("dstatus: cannot allocate memory for bar");
-
-    for (int i = 0, b = (int) round(CONSTRAIN(f) / BAR_LEN); i < BAR_LEN; i++)
-        s[i] = i < b ? BAR_CHAR_ON : BAR_CHAR_OFF;
-
-    return s;
-}
-
 static char *draw_percent(const float f) {
     char *s;
 
     if (asprintf(&s, "%0.0f%%", CONSTRAIN(f)) == -1)
         die("dstatus: cannot format percentage");
+    return s;
+}
+
+static char *draw_bar(const float f, const int len) {
+    char *s;
+
+    if (len == 0)
+        return draw_percent(f);
+
+    if (!(s = calloc(len+1, sizeof(char))))
+        die("dstatus: cannot allocate memory for bar");
+
+    for (int i = 0, b = (int) round(CONSTRAIN(f) / len); i < len; i++)
+        s[i] = i < b ? BAR_CHAR_ON : BAR_CHAR_OFF;
+
     return s;
 }
 
@@ -317,12 +320,7 @@ static char *get_backlight(void) {
 #else
     char *s, *bar;
 
-#ifdef BKLT_USE_BAR
-    bar = draw_bar(backlight);
-#else
-    bar = draw_percent(backlight);
-#endif // BKLT_USE_VAR
-
+    bar = draw_bar(backlight, BKLT_BAR_LEN);
     if (asprintf(&s, BKLT_FMT, bar) == -1)
         die("dstatus: cannot format backlight");
     free(bar);
@@ -342,13 +340,8 @@ static char *get_vol(void) {
     if (volinfo.muted) {
         if (asprintf(&bar, "%s", VOL_MUTED) == -1)
             die("dstatus: cannot format vol muted");
-    } else {
-#ifdef VOL_USE_BAR
-        bar = draw_bar((float) volinfo.level);
-#else
-        bar = draw_percent((float) volinfo.level);
-#endif // VOL_USE_BAR
-    }
+    } else
+        bar = draw_bar((float) volinfo.level, VOL_BAR_LEN);
 
     vol_unlock();
 
@@ -391,11 +384,7 @@ static char *get_batt(void) {
         status = 'U';
     fclose(fh);
 
-#ifdef BATT_USE_BAR
-    bar = draw_bar(batt);
-#else
-    bar = draw_percent(batt);
-#endif // BATT_USE_BAR
+    bar = draw_bar(batt, BATT_BAR_LEN);
     if (asprintf(&s, BATT_FMT, status, bar) == -1)
         die("dstatus: cannot format batt");
     free(bar);
@@ -425,11 +414,7 @@ static char *get_cpu(void) {
     lstat.idle = stat.idle;
     lstat.total = stat.total;
 
-#ifdef CPU_USE_BAR
-    bar = draw_bar(cpu);
-#else
-    bar = draw_percent(cpu);
-#endif // CPU_USE_BAR
+    bar = draw_bar(cpu, CPU_BAR_LEN);
     if (asprintf(&s, CPU_FMT, bar) == -1)
         die("dstatus: cannot format cpu");
     free(bar);

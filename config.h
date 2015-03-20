@@ -17,7 +17,6 @@
  * If bars are enabled these control the length and look of the bar. Example:
  * C:=====-----
  */
-#define BAR_LEN 10
 #define BAR_CHAR_ON '='
 #define BAR_CHAR_OFF '-'
 
@@ -33,18 +32,18 @@
 /**
  * CPU settings
  *
- * Remove CPU_USE_BAR to display percentage instead of bar.
+ * Set CPU_BAR_LEN 0 to display percentage instead of bar.
  */
 #define CPU_FMT "C:%s"
-#define CPU_USE_BAR
+#define CPU_BAR_LEN 10
 
 /**
  * Battery settings
  *
- * Remove BATT_USE_BAR to display percentage instead of bar.
+ * Set BATT_BAR_LEN 0 to display percentage instead of bar.
  */
 #define BATT_FMT "B:%c:%s"
-#define BATT_USE_BAR
+#define BATT_BAR_LEN 10
 #define BATT_PATH "/sys/class/power_supply/BAT0"
 #define BATT_CHARGE_NOW BATT_PATH "/charge_now"
 #define BATT_CHARGE_FULL BATT_PATH "/charge_full"
@@ -53,20 +52,20 @@
 /**
  * Volume settings
  *
- * Remove VOL_USE_BAR to display percentage instead of bar.
+ * Set VOL_BAR_LEN 0 to display percentage instead of bar.
  */
 #define VOL_FMT "V:%s"
-#define VOL_USE_BAR
+#define VOL_BAR_LEN 10
 #define VOL_MIXER "Master"
 #define VOL_MUTED "[off]     "
 
 /**
  * Backlight settings
  *
- * Remove BKLT_USE_BAR to display percentage instead of bar.
+ * Set BKLT_BAR_LEN 0 to display percentage instead of bar.
  */
 #define BKLT_FMT "L:%s"
-#define BKLT_USE_BAR
+#define BKLT_BAR_LEN 10
 #define BKLT_PATH "/sys/class/backlight/radeon_bl0"
 #define BKLT_MAX BKLT_PATH "/max_brightness"
 #define BKLT_CURRENT BKLT_PATH "/actual_brightness"
