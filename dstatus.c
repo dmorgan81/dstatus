@@ -423,7 +423,7 @@ static char *get_cpu(void) {
 #endif // WITH_CPU
 }
 
-static char *get_time(void) {
+static char *get_time(bool refresh) {
 #ifndef WITH_TIME
     return EMPTY_STRING;
 #else
@@ -434,7 +434,7 @@ static char *get_time(void) {
 
     t = time(NULL);
 
-    if (!cache || t % 60 == 0) {
+    if (!cache || refresh || t % 60 == 0) {
         /* Note that if you want to display seconds, this cache won't work. */
         free(cache);
 
@@ -463,8 +463,10 @@ static void set_status(const char *fmt, ...) {
     va_end(ap);
 
 #ifdef WITH_X
+    XLockDisplay(dpy);
     XStoreName(dpy, DefaultRootWindow(dpy), status);
     XSync(dpy, false);
+    XUnlockDisplay(dpy);
 #else
     printf("%s\n", status);
 #endif
@@ -473,7 +475,7 @@ static void set_status(const char *fmt, ...) {
 }
 
 static void update_status(void) {
-    char *time = get_time();
+    char *time = get_time(false);
     char *cpu = get_cpu();
     char *batt = get_batt();
     char *vol = get_vol();
@@ -527,6 +529,7 @@ static void process_acpid_event(char *event) {
 #ifdef WITH_BKLT
             read_backlight();
 #endif
+            free(get_time(true));
             update_status();
             break;
         }
@@ -585,6 +588,8 @@ int main(void) {
     pthread_t thrd_acpid, thrd_vol, thrd_wifi;
 
 #ifdef WITH_X
+    if (XInitThreads() != 1)
+        die("dstatus: cannot init X threads");
     if (!(dpy = XOpenDisplay(NULL)))
         die("dstatus: cannot open display");
 #else
