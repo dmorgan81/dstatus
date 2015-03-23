@@ -10,11 +10,9 @@
 #include <string.h>
 #include <signal.h>
 #include <alloca.h>
-#include <pthread.h>
 
 #include <errno.h>
 
-#include <sys/select.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/socket.h>
@@ -23,8 +21,6 @@
 #include <alsa/asoundlib.h>
 #include <X11/Xlib.h>
 #include <linux/wireless.h>
-#include <linux/netlink.h>
-#include <linux/rtnetlink.h>
 
 #include "config.h"
 
@@ -55,7 +51,6 @@ static VolDev voldev;
 typedef struct {
     int level;
     bool muted;
-    pthread_mutex_t mutex;
 } VolInfo;
 static VolInfo volinfo;
 #endif
@@ -68,10 +63,9 @@ static float backlight;
 static char *wifi;
 #endif
 
-static int acpid_socket;
-static char *acpid_events[] = ACPID_EVENTS;
-
-static void update_status(void);
+#ifdef WITH_TIME
+static char *time_cache;
+#endif
 
 static void die(const char *fmt, ...) {
     va_list ap;
@@ -127,26 +121,11 @@ static void vol_open(void) {
     if (!(mixer = snd_mixer_find_selem(card, sid)))
         die("dstatus: cannot init ALSA");
     voldev.mixer = mixer;
-
-    if (pthread_mutex_init(&(volinfo.mutex), NULL) != 0)
-        die("dstatus: cannot init volinfo.mutex");
 }
 
 static void vol_close(void) {
     snd_mixer_close(voldev.card);
     snd_config_update_free_global();
-
-    pthread_mutex_destroy(&(volinfo.mutex));
-}
-
-static void vol_lock(void) {
-    if (pthread_mutex_lock(&(volinfo.mutex)) != 0)
-        die("dstatus: cannot lock volinfo.mutex");
-}
-
-static void vol_unlock(void) {
-    if (pthread_mutex_unlock(&(volinfo.mutex)) != 0)
-        die("dstatus: cannot unlock volinfo.mutex");
 }
 
 static void read_vol(void) {
@@ -154,11 +133,7 @@ static void read_vol(void) {
     long vol, min, max;
     snd_mixer_elem_t *mixer = voldev.mixer;
 
-    vol_lock();
-
-    if (snd_mixer_selem_get_playback_switch(mixer, SND_MIXER_SCHN_MONO, &muted) < 0)
-        die("dstatus: cannot set vol.muted");
-    volinfo.muted = !muted;
+    snd_mixer_handle_events(voldev.card);
 
     snd_mixer_selem_get_playback_volume_range(mixer, &min, &max);
     if (snd_mixer_selem_get_playback_volume(mixer, SND_MIXER_SCHN_MONO, &vol) < 0)
@@ -166,21 +141,9 @@ static void read_vol(void) {
     vol = vol < max ? (vol > min ? vol : min) : max;
     volinfo.level = (int) round((vol * 100.0f) / max);
 
-    vol_unlock();
-}
-
-static void *vol_thread(void *arg) {
-    if (pthread_detach(pthread_self()) != 0)
-        die("dstatus: cannot detach vol thread");
-
-    while (true) {
-        snd_mixer_wait(voldev.card, -1);
-        snd_mixer_handle_events(voldev.card);
-        read_vol();
-        update_status();
-    }
-
-    return NULL;
+    if (snd_mixer_selem_get_playback_switch(mixer, SND_MIXER_SCHN_MONO, &muted) < 0)
+        die("dstatus: cannot set vol.muted");
+    volinfo.muted = !muted;
 }
 #endif
 
@@ -241,40 +204,18 @@ static void read_wifi(void) {
             die("dstatus: cannot set essid");
     }
 }
+#endif
 
-static void *wifi_thread(void *arg) {
-    struct sockaddr_nl addr;
-    int sock, len;
-    char buffer[4096];
-    struct nlmsghdr *nlh;
+#ifdef WITH_TIME
+static void read_time(void) {
+    time_t t = time(NULL);
 
-    if (pthread_detach(pthread_self()) != 0)
-        die("dstatus: cannot detach wifi thread");
+    free(time_cache);
 
-    if ((sock = socket(PF_NETLINK, SOCK_RAW, NETLINK_ROUTE)) == -1)
-        die("dstatus: cannot open NETLINK_ROUTE socket");
-
-    memset(&addr, 0, sizeof(addr));
-    addr.nl_family = AF_NETLINK;
-    addr.nl_groups = RTMGRP_IPV4_IFADDR;
-
-    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) == -1)
-        die("dstatus: cannot bind to NETLINK_ROUTE socket");
-
-    nlh = (struct nlmsghdr *) buffer;
-    while ((len = recv(sock, nlh, sizeof(buffer), 0)) > 0) {
-        while ((NLMSG_OK(nlh, len)) && (nlh->nlmsg_type != NLMSG_DONE)) {
-            if (nlh->nlmsg_type == RTM_NEWADDR || nlh->nlmsg_type == RTM_DELADDR) {
-                read_wifi();
-                update_status();
-            }
-            nlh = NLMSG_NEXT(nlh, len);
-        }
-    }
-
-    die("dstatus: end of wifi thread");
-
-    return NULL;
+    if (!(time_cache = calloc(DATE_TIME_MAX_LEN + 1, sizeof(char))))
+        die("dstatus: cannot allocate memory for time");
+    if (strftime(time_cache, DATE_TIME_MAX_LEN, DATE_TIME_FMT, localtime(&t)) == -1)
+        die("dstatus: cannot format time");
 }
 #endif
 
@@ -335,15 +276,11 @@ static char *get_vol(void) {
 #else
     char *s, *bar;
 
-    vol_lock();
-
     if (volinfo.muted) {
         if (asprintf(&bar, "%s", VOL_MUTED) == -1)
             die("dstatus: cannot format vol muted");
     } else
         bar = draw_bar((float) volinfo.level, VOL_BAR_LEN);
-
-    vol_unlock();
 
     if (asprintf(&s, VOL_FMT, bar) == -1)
         die("dstatus: cannot format vol");
@@ -423,31 +360,22 @@ static char *get_cpu(void) {
 #endif // WITH_CPU
 }
 
-static char *get_time(bool refresh) {
+static char *get_time() {
 #ifndef WITH_TIME
     return EMPTY_STRING;
 #else
-    static char *cache;
     char *s;
-    time_t t;
     size_t len;
+    time_t t = time(NULL);
 
-    t = time(NULL);
+    /* Note that if you want to display seconds, this cache won't work. */
+    if (t % 60 == 0)
+        read_time();
 
-    if (!cache || refresh || t % 60 == 0) {
-        /* Note that if you want to display seconds, this cache won't work. */
-        free(cache);
-
-        if (!(cache = calloc(DATE_TIME_MAX_LEN + 1, sizeof(char))))
-            die("dstatus: cannot allocate memory for time");
-        if (strftime(cache, DATE_TIME_MAX_LEN, DATE_TIME_FMT, localtime(&t)) == -1)
-            die("dstatus: cannot format time");
-    }
-
-    len = strlen(cache) + 1;
+    len = strlen(time_cache) + 1;
     if (!(s = calloc(len, sizeof(char))))
         die("dstatus: cannot allocate memory for time");
-    strncpy(s, cache, len);
+    strncpy(s, time_cache, len);
 
     return s;
 #endif
@@ -475,7 +403,7 @@ static void set_status(const char *fmt, ...) {
 }
 
 static void update_status(void) {
-    char *time = get_time(false);
+    char *time = get_time();
     char *cpu = get_cpu();
     char *batt = get_batt();
     char *vol = get_vol();
@@ -492,81 +420,7 @@ static void update_status(void) {
     free(wifi);
 }
 
-static char *read_acpid_socket(void) {
-    char *s = NULL, *rs;
-    char buffer[4096];
-    fd_set rfds;
-    ssize_t n;
-    size_t size = 0;
-
-    FD_ZERO(&rfds);
-    FD_SET(acpid_socket, &rfds);
-
-    if (select(acpid_socket+1, &rfds, NULL, NULL, NULL) == -1)
-        die("dstatus: cannot read from acpid socket");
-
-    if ((n = read(acpid_socket, buffer, sizeof(buffer))) == -1)
-        die("dstatus: cannot read from acpid socket");
-
-    if (!(rs = realloc(s, size + n + 1)))
-        die("dstatus: cannot read from acpid socket");
-    s = rs;
-
-    memcpy(s + size, buffer, n);
-    size += n;
-    *(s+size) = 0;
-
-    return s;
-}
-
-static void process_acpid_event(char *event) {
-    char *s, *found;
-    int len = sizeof(acpid_events) / sizeof(acpid_events[0]);
-
-    for (int i = 0; i < len; i++) {
-        s = acpid_events[i];
-        if ((found = strstr(event, s))) {
-#ifdef WITH_BKLT
-            read_backlight();
-#endif
-            free(get_time(true));
-            update_status();
-            break;
-        }
-    }
-}
-
-static void *acpid_thread(void *arg) {
-    char *s;
-    struct sockaddr_un remote;
-
-    if (pthread_detach(pthread_self()) != 0)
-        die("dstatus: cannot detach acpid thread");
-
-    if ((acpid_socket = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
-        die("dstatus: cannot connect to acpid socket");
-
-    remote.sun_family = AF_UNIX;
-    strcpy(remote.sun_path, ACPID_SOCKET);
-    if (connect(acpid_socket, (struct sockaddr *)&remote, sizeof(remote)) == -1)
-        die("dstatus: cannot connect to acpid socket");
-
-    if (fcntl(acpid_socket, F_SETFD, FD_CLOEXEC) == -1)
-        die("dstatus: cannot connect to acpid socket");
-
-    while (true) {
-        s = read_acpid_socket();
-        process_acpid_event(s);
-        free(s);
-    }
-
-    return NULL;
-}
-
-static void trap(const int signo) {
-    if (signo != SIGINT)
-        return;
-
+static void cleanup(void) {
 #ifdef WITH_X
     XCloseDisplay(dpy);
 #endif
@@ -579,48 +433,58 @@ static void trap(const int signo) {
     free(wifi);
 #endif
 
-    close(acpid_socket);
+#ifdef WITH_TIME
+    free(time_cache);
+#endif
 
     exit(EXIT_SUCCESS);
 }
 
-int main(void) {
-    pthread_t thrd_acpid, thrd_vol, thrd_wifi;
+static void refresh(void) {
+#ifdef WITH_BKLT
+    read_backlight();
+#endif
 
+#ifdef WITH_TIME
+    read_time();
+#endif
+
+#ifdef WITH_WIFI
+    read_wifi();
+#endif
+
+#ifdef WITH_VOL
+    read_vol();
+#endif
+}
+
+static void trap(const int signo) {
+    if (signo == SIGINT)
+        cleanup();
+    if (signo == SIGHUP)
+        refresh();
+}
+
+int main(void) {
 #ifdef WITH_X
-    if (XInitThreads() != 1)
-        die("dstatus: cannot init X threads");
     if (!(dpy = XOpenDisplay(NULL)))
         die("dstatus: cannot open display");
 #else
     setbuf(stdout, NULL);
 #endif
 
+#ifdef WITH_VOL
+    vol_open();
+#endif
+
     signal(SIGINT, trap);
+    signal(SIGHUP, trap);
 
 #ifdef WITH_CPU
     read_stat(&lstat);
 #endif
 
-#ifdef WITH_BKLT
-    read_backlight();
-#endif
-
-#ifdef WITH_WIFI
-    read_wifi();
-    if (pthread_create(&thrd_wifi, NULL, wifi_thread, NULL) != 0)
-        die("dstatus: cannot create wifi thread");
-#endif
-
-#ifdef WITH_VOL
-    vol_open();
-    read_vol();
-    if (pthread_create(&thrd_vol, NULL, vol_thread, NULL) != 0)
-        die("dstatus: cannot create vol thread");
-#endif
-
-    if (pthread_create(&thrd_acpid, NULL, acpid_thread, NULL) != 0)
-        die("dstatus: cannot create acpid thread");
+    refresh();
 
     for (;;sleep(1))
         update_status();
